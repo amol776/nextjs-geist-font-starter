@@ -13,15 +13,17 @@ from typing import Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 def generate_datacompy_report(source_df: pd.DataFrame, target_df: pd.DataFrame, 
-                            join_columns: List[str], mapping_df: pd.DataFrame) -> BytesIO:
+                            join_columns: List[str], mapping_df: pd.DataFrame,
+                            join_mappings: Dict[str, str]) -> BytesIO:
     """
     Generate a DataCompy comparison report.
     
     Args:
         source_df: Source DataFrame
         target_df: Target DataFrame
-        join_columns: List of columns to join on
+        join_columns: List of source columns to join on
         mapping_df: DataFrame containing column mapping information
+        join_mappings: Dictionary mapping source join columns to target join columns
     
     Returns:
         BytesIO object containing the report
@@ -30,10 +32,34 @@ def generate_datacompy_report(source_df: pd.DataFrame, target_df: pd.DataFrame,
         # Get excluded columns
         excluded_columns = mapping_df[mapping_df['Exclude from Comparison']]['Source Column'].tolist()
         
-        # Remove excluded columns from comparison
-        source_compare = source_df.drop(columns=excluded_columns, errors='ignore')
-        target_compare = target_df.drop(columns=[mapping_df[mapping_df['Source Column'] == col]['Target Column'].iloc[0] 
-                                               for col in excluded_columns], errors='ignore')
+        # Create mapping dictionary from mapping_df
+        column_mapping = dict(zip(
+            mapping_df['Source Column'],
+            mapping_df['Target Column']
+        ))
+        
+        # Filter out unmapped and excluded columns
+        valid_columns = {
+            src: tgt for src, tgt in column_mapping.items()
+            if tgt and not pd.isna(tgt) and src not in excluded_columns
+        }
+        
+        # Prepare DataFrames for comparison
+        source_cols = list(valid_columns.keys())
+        target_cols = [valid_columns[src] for src in source_cols]
+        
+        source_compare = source_df[source_cols].copy()
+        target_compare = target_df[target_cols].copy()
+        
+        # Rename target columns to match source columns for comparison
+        target_compare.columns = source_cols
+        
+        # Get the target join column names
+        target_join_columns = [join_mappings[src] for src in join_columns]
+        
+        # Rename join columns in target DataFrame to match source
+        join_column_mapping = dict(zip(target_join_columns, join_columns))
+        target_compare.rename(columns=join_column_mapping, inplace=True)
         
         # Create comparison object
         comparison = datacompy.Compare(
@@ -87,9 +113,32 @@ def generate_ydata_profile(source_df: pd.DataFrame, target_df: pd.DataFrame,
         BytesIO object containing the report
     """
     try:
+        # Create mapping dictionary from mapping_df
+        column_mapping = dict(zip(
+            mapping_df['Source Column'],
+            mapping_df['Target Column']
+        ))
+        
+        # Filter out unmapped and excluded columns
+        excluded_columns = mapping_df[mapping_df['Exclude from Comparison']]['Source Column'].tolist()
+        valid_columns = {
+            src: tgt for src, tgt in column_mapping.items()
+            if tgt and not pd.isna(tgt) and src not in excluded_columns
+        }
+        
+        # Prepare DataFrames for comparison
+        source_cols = list(valid_columns.keys())
+        target_cols = [valid_columns[src] for src in source_cols]
+        
+        source_compare = source_df[source_cols].copy()
+        target_compare = target_df[target_cols].copy()
+        
+        # Rename target columns to match source columns for comparison
+        target_compare.columns = source_cols
+        
         # Generate profiles
-        source_profile = ProfileReport(source_df, title="Source Data Profile")
-        target_profile = ProfileReport(target_df, title="Target Data Profile")
+        source_profile = ProfileReport(source_compare, title="Source Data Profile")
+        target_profile = ProfileReport(target_compare, title="Target Data Profile")
         
         # Compare profiles
         comparison_report = source_profile.compare(target_profile)
@@ -266,15 +315,17 @@ def _generate_distinct_check(source_df: pd.DataFrame, target_df: pd.DataFrame,
             worksheet.write(row + 1, values_match_col, 'FAIL', fail_format)
 
 def generate_difference_report(source_df: pd.DataFrame, target_df: pd.DataFrame,
-                             join_columns: List[str], mapping_df: pd.DataFrame) -> BytesIO:
+                             join_columns: List[str], mapping_df: pd.DataFrame,
+                             join_mappings: Dict[str, str]) -> BytesIO:
     """
     Generate side-by-side difference report.
     
     Args:
         source_df: Source DataFrame
         target_df: Target DataFrame
-        join_columns: List of columns to join on
+        join_columns: List of source columns to join on
         mapping_df: DataFrame containing column mapping information
+        join_mappings: Dictionary mapping source join columns to target join columns
     
     Returns:
         BytesIO object containing the report
@@ -282,13 +333,38 @@ def generate_difference_report(source_df: pd.DataFrame, target_df: pd.DataFrame,
     try:
         output = BytesIO()
         
+        # Create mapping dictionary from mapping_df
+        column_mapping = dict(zip(
+            mapping_df['Source Column'],
+            mapping_df['Target Column']
+        ))
+        
+        # Filter out unmapped and excluded columns
+        excluded_columns = mapping_df[mapping_df['Exclude from Comparison']]['Source Column'].tolist()
+        valid_columns = {
+            src: tgt for src, tgt in column_mapping.items()
+            if tgt and not pd.isna(tgt) and src not in excluded_columns
+        }
+        
+        # Prepare DataFrames for comparison
+        source_cols = list(valid_columns.keys())
+        target_cols = [valid_columns[src] for src in source_cols]
+        
+        source_compare = source_df[source_cols].copy()
+        target_compare = target_df[target_cols].copy()
+        
+        # Get the target join column names
+        target_join_columns = [join_mappings[src] for src in join_columns]
+        
         # Merge datasets
-        merged = pd.merge(source_df, target_df, 
-                         left_on=join_columns,
-                         right_on=[mapping_df[mapping_df['Source Column'] == col]['Target Column'].iloc[0] 
-                                 for col in join_columns],
-                         how='outer',
-                         indicator=True)
+        merged = pd.merge(
+            source_compare, target_compare,
+            left_on=join_columns,
+            right_on=target_join_columns,
+            how='outer',
+            suffixes=('_source', '_target'),
+            indicator=True
+        )
         
         # Find differences
         differences = merged[merged['_merge'] != 'both']
@@ -307,12 +383,70 @@ def generate_difference_report(source_df: pd.DataFrame, target_df: pd.DataFrame,
         logger.error(f"Error generating difference report: {str(e)}")
         raise Exception(f"Failed to generate difference report: {str(e)}")
 
+def create_individual_reports_zip(datacompy_report: BytesIO,
+                                ydata_report: BytesIO,
+                                regression_report: BytesIO,
+                                difference_report: BytesIO) -> BytesIO:
+    """
+    Create a ZIP file containing individual reports in separate folders.
+    
+    Args:
+        datacompy_report: DataCompy report as BytesIO
+        ydata_report: Y-Data Profiling report as BytesIO
+        regression_report: Regression report as BytesIO
+        difference_report: Difference report as BytesIO
+    
+    Returns:
+        BytesIO object containing the ZIP file with individual reports
+    """
+    try:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output = BytesIO()
+        
+        with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # DataCompy Report
+            zf.writestr(f'datacompy/datacompy_report_{timestamp}.xlsx', 
+                       datacompy_report.getvalue())
+            
+            # Y-Data Profile
+            zf.writestr(f'ydata_profile/comparison_profile_{timestamp}.html', 
+                       ydata_report.getvalue())
+            
+            # Regression Report
+            zf.writestr(f'regression/regression_report_{timestamp}.xlsx', 
+                       regression_report.getvalue())
+            
+            # Difference Report
+            zf.writestr(f'differences/difference_report_{timestamp}.xlsx', 
+                       difference_report.getvalue())
+            
+            # Add a README file
+            readme_content = """
+Data Comparison Reports
+
+1. datacompy/ - Contains detailed comparison report
+2. ydata_profile/ - Contains comprehensive data profiling
+3. regression/ - Contains aggregation, count, and distinct value checks
+4. differences/ - Contains side-by-side difference report
+
+Generated on: {timestamp}
+            """.format(timestamp=timestamp)
+            
+            zf.writestr('README.txt', readme_content.strip())
+        
+        output.seek(0)
+        return output
+    
+    except Exception as e:
+        logger.error(f"Error creating individual reports zip: {str(e)}")
+        raise Exception(f"Failed to create individual reports zip: {str(e)}")
+
 def create_consolidated_report(datacompy_report: BytesIO,
                              ydata_report: BytesIO,
                              regression_report: BytesIO,
                              difference_report: BytesIO) -> BytesIO:
     """
-    Combine all reports into a single ZIP file.
+    Combine all reports into a single consolidated report.
     
     Args:
         datacompy_report: DataCompy report as BytesIO
@@ -328,10 +462,30 @@ def create_consolidated_report(datacompy_report: BytesIO,
         output = BytesIO()
         
         with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr(f'datacompy_report_{timestamp}.xlsx', datacompy_report.getvalue())
-            zf.writestr(f'ydata_profile_{timestamp}.html', ydata_report.getvalue())
-            zf.writestr(f'regression_report_{timestamp}.xlsx', regression_report.getvalue())
-            zf.writestr(f'difference_report_{timestamp}.xlsx', difference_report.getvalue())
+            # Add all reports to a single consolidated file
+            zf.writestr(f'reports/datacompy_report_{timestamp}.xlsx', 
+                       datacompy_report.getvalue())
+            zf.writestr(f'reports/ydata_profile_{timestamp}.html', 
+                       ydata_report.getvalue())
+            zf.writestr(f'reports/regression_report_{timestamp}.xlsx', 
+                       regression_report.getvalue())
+            zf.writestr(f'reports/difference_report_{timestamp}.xlsx', 
+                       difference_report.getvalue())
+            
+            # Add a summary README
+            readme_content = """
+Consolidated Data Comparison Report
+
+This ZIP file contains the following reports:
+1. datacompy_report - Detailed comparison of datasets
+2. ydata_profile - Comprehensive data profiling
+3. regression_report - Aggregation, count, and distinct value checks
+4. difference_report - Side-by-side differences
+
+Generated on: {timestamp}
+            """.format(timestamp=timestamp)
+            
+            zf.writestr('README.txt', readme_content.strip())
         
         output.seek(0)
         return output
