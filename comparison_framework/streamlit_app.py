@@ -14,7 +14,13 @@ from backend.data_reader import (
     read_parquet,
     read_zipped_files
 )
-from backend.mapping_utils import auto_map_columns, validate_join_columns
+from backend.mapping_utils import (
+    auto_map_columns,
+    validate_join_columns,
+    validate_mapping,
+    apply_column_mapping,
+    get_excluded_columns
+)
 from backend.report_generator import (
     generate_datacompy_report,
     generate_ydata_profile,
