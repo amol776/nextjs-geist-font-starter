@@ -24,15 +24,42 @@ def read_csv_dat(file, delimiter=',', chunksize=None):
         pandas DataFrame
     """
     try:
-        # Check file size
-        if check_file_size(file) > 3 * 1024 * 1024 * 1024:  # 3GB
-            logger.info("Large file detected, using chunked reading")
-            chunks = []
-            for chunk in pd.read_csv(file, delimiter=delimiter, chunksize=500000):
-                chunks.append(chunk)
-            return pd.concat(chunks, ignore_index=True)
-        else:
-            return pd.read_csv(file, delimiter=delimiter)
+        # Try to detect the encoding
+        try:
+            import chardet
+            raw_data = file.read()
+            file.seek(0)  # Reset file pointer
+            detected = chardet.detect(raw_data)
+            encoding = detected['encoding']
+        except:
+            encoding = 'utf-8'
+            
+        # First try with default settings
+        try:
+            if check_file_size(file) > 3 * 1024 * 1024 * 1024:  # 3GB
+                logger.info("Large file detected, using chunked reading")
+                chunks = []
+                for chunk in pd.read_csv(file, delimiter=delimiter, chunksize=500000, 
+                                       encoding=encoding, on_bad_lines='skip'):
+                    chunks.append(chunk)
+                return pd.concat(chunks, ignore_index=True)
+            else:
+                return pd.read_csv(file, delimiter=delimiter, encoding=encoding, 
+                                 on_bad_lines='skip')
+        except Exception as e:
+            logger.warning(f"First attempt to read CSV failed: {str(e)}")
+            
+            # If first attempt fails, try with more flexible settings
+            file.seek(0)  # Reset file pointer
+            try:
+                return pd.read_csv(file, delimiter=delimiter, encoding=encoding,
+                                 on_bad_lines='skip',  # Skip bad lines
+                                 quoting=3,  # QUOTE_NONE
+                                 engine='python'  # More flexible but slower engine
+                                )
+            except Exception as e2:
+                logger.error(f"Both attempts to read CSV failed. First error: {str(e)}, Second error: {str(e2)}")
+                raise Exception(f"Failed to read file. Please check the delimiter and file format. Error: {str(e2)}")
     except Exception as e:
         logger.error(f"Error reading CSV/DAT file: {str(e)}")
         raise Exception(f"Failed to read file: {str(e)}")
@@ -52,13 +79,60 @@ def read_sql(server, database, username, password, query):
         pandas DataFrame
     """
     try:
-        connection_string = f"mssql+pyodbc://{username}:{password}@{server}/{database}?driver=ODBC+Driver+17+for+SQL+Server"
-        engine = create_engine(connection_string)
+        # Try different SQL Server drivers
+        drivers = [
+            'ODBC Driver 17 for SQL Server',
+            'ODBC Driver 13 for SQL Server',
+            'SQL Server',
+            'SQL Server Native Client 11.0',
+            'SQL Server Native Client 10.0'
+        ]
         
-        # Execute query in chunks for large datasets
+        connection = None
+        last_error = None
+        
+        for driver in drivers:
+            try:
+                connection_string = (
+                    f"DRIVER={{{driver}}};"
+                    f"SERVER={server};"
+                    f"DATABASE={database};"
+                    f"UID={username};"
+                    f"PWD={password};"
+                    "Trusted_Connection=no;"
+                )
+                
+                connection = pyodbc.connect(connection_string, timeout=30)
+                logger.info(f"Successfully connected using driver: {driver}")
+                break
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Failed to connect using driver {driver}: {str(e)}")
+                continue
+        
+        if connection is None:
+            raise Exception(f"Failed to connect to SQL Server with any available driver. Last error: {str(last_error)}")
+        
+        # Execute query in chunks
         chunks = []
-        for chunk in pd.read_sql(query, engine, chunksize=500000):
-            chunks.append(chunk)
+        cursor = connection.cursor()
+        
+        # Execute the query
+        cursor.execute(query)
+        
+        # Get column names
+        columns = [column[0] for column in cursor.description]
+        
+        # Fetch data in chunks
+        while True:
+            rows = cursor.fetchmany(500000)
+            if not rows:
+                break
+            chunk_df = pd.DataFrame.from_records(rows, columns=columns)
+            chunks.append(chunk_df)
+        
+        cursor.close()
+        connection.close()
         
         return pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame()
     except Exception as e:
