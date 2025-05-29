@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 import os
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Any
+import logging
 from backend.data_reader import (
     read_csv_dat,
     read_sql,
@@ -30,8 +31,10 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize logger
-logger = setup_logger()
+# Set up logging
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logger = setup_logger()
 
 # Define the type mapping dictionary
 TYPE_MAPPING = {
@@ -239,7 +242,7 @@ def main():
                         base_type = 'Float'
                     elif all(isinstance(x, bool) for x in sample):
                         base_type = 'Boolean'
-                    elif all(isinstance(x, (datetime.date, datetime.datetime, pd.Timestamp)) for x in sample):
+                    elif all(isinstance(x, (date, datetime, pd.Timestamp)) for x in sample):
                         base_type = 'datetime'
                     else:
                         base_type = 'varchar'
@@ -364,7 +367,7 @@ def main():
                             st.download_button(
                                 label="📥 Download Consolidated Report",
                                 data=consolidated_report,
-                                file_name=f"consolidated_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                                file_name=f"consolidated_report_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip",
                                 mime="application/zip",
                                 help="Download all reports in a single ZIP file"
                             )
@@ -378,7 +381,7 @@ def main():
                                     regression_report,
                                     difference_report
                                 ),
-                                file_name=f"individual_reports_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                                file_name=f"individual_reports_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip",
                                 mime="application/zip",
                                 help="Download reports as separate files in a ZIP"
                             )
@@ -407,7 +410,7 @@ def main():
                     # Log the full error
                     logger.error(f"Comparison error: {error_msg}", exc_info=True)
 
-def handle_data_input(prefix, data_type):
+def handle_data_input(prefix: str, data_type: str) -> Optional[pd.DataFrame]:
     """Handle different types of data input based on the selected type."""
     try:
         if data_type in ["CSV file", "DAT file", "Parquet file"]:
