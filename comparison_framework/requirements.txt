@@ -12,3 +12,4 @@ ydata-profiling>=4.6.0
 pyarrow>=14.0.1  # For parquet support
 fastparquet>=2023.10.1
 zipfile38>=0.0.3
+chardet>=5.2.0  # For file encoding detection
