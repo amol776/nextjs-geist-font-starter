@@ -316,13 +316,19 @@ def main():
                             try:
                                 if dtype == 'int64':
                                     source_data[col] = pd.to_numeric(source_data[col], errors='coerce').astype('Int64')
+                                    target_data[mapping[col]] = pd.to_numeric(target_data[mapping[col]], errors='coerce').astype('Int64')
                                 elif dtype == 'float64':
                                     source_data[col] = pd.to_numeric(source_data[col], errors='coerce')
+                                    target_data[mapping[col]] = pd.to_numeric(target_data[mapping[col]], errors='coerce')
                                 elif dtype == 'datetime64[ns]':
                                     source_data[col] = pd.to_datetime(source_data[col], errors='coerce')
+                                    target_data[mapping[col]] = pd.to_datetime(target_data[mapping[col]], errors='coerce')
                                 elif dtype == 'bool':
                                     source_data[col] = source_data[col].astype('boolean')
-                                # string type conversion is not needed
+                                    target_data[mapping[col]] = target_data[mapping[col]].astype('boolean')
+                                else:  # string type
+                                    source_data[col] = source_data[col].astype(str)
+                                    target_data[mapping[col]] = target_data[mapping[col]].astype(str)
                             except Exception as e:
                                 st.error(f"❌ Error converting {col} to {dtype}: {str(e)}")
                                 raise Exception(f"Data type conversion failed for column {col}")
