@@ -61,13 +61,21 @@ def generate_datacompy_report(source_df: pd.DataFrame, target_df: pd.DataFrame,
         join_column_mapping = dict(zip(target_join_columns, join_columns))
         target_compare.rename(columns=join_column_mapping, inplace=True)
         
+        # Ensure datetime columns are properly converted
+        for col in source_compare.columns:
+            if source_compare[col].dtype == 'datetime64[ns]':
+                target_compare[col] = pd.to_datetime(target_compare[col], errors='coerce')
+            elif target_compare[col].dtype == 'datetime64[ns]':
+                source_compare[col] = pd.to_datetime(source_compare[col], errors='coerce')
+
         # Create comparison object
         comparison = datacompy.Compare(
             df1=source_compare,
             df2=target_compare,
             join_columns=join_columns,
             df1_name='Source',
-            df2_name='Target'
+            df2_name='Target',
+            on_index=False
         )
         
         # Generate report
@@ -77,9 +85,9 @@ def generate_datacompy_report(source_df: pd.DataFrame, target_df: pd.DataFrame,
             pd.DataFrame({
                 'Metric': ['Rows in Source', 'Rows in Target', 'Rows in Common', 'Rows Only in Source', 
                           'Rows Only in Target', 'Columns Match', 'All Row Values Match'],
-                'Value': [comparison.df1_unq_rows, comparison.df2_unq_rows, comparison.intersect_rows,
+                'Value': [len(source_compare), len(target_compare), comparison.intersect_rows,
                          comparison.df1_unq_rows, comparison.df2_unq_rows, 
-                         comparison.all_columns_match, comparison.all_rows_match]
+                         comparison.all_columns_match, comparison.matches()]
             }).to_excel(writer, sheet_name='Summary', index=False)
             
             # Write mismatched columns
