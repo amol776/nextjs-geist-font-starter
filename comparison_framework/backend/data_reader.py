@@ -64,23 +64,27 @@ def read_csv_dat(file, delimiter=',', chunksize=None):
         logger.error(f"Error reading CSV/DAT file: {str(e)}")
         raise Exception(f"Failed to read file: {str(e)}")
 
-def read_sql(server, database, username, password, query):
+def read_sql(server, database, username=None, password=None, query=None):
     """
     Read data from SQL Server using a query.
     
     Args:
         server: SQL Server hostname
         database: Database name
-        username: SQL Server username
-        password: SQL Server password
+        username: SQL Server username (optional for Windows auth)
+        password: SQL Server password (optional for Windows auth)
         query: SQL query to execute
     
     Returns:
         pandas DataFrame
     """
     try:
+        if not query:
+            raise ValueError("Query cannot be empty")
+
         # Try different SQL Server drivers
         drivers = [
+            'ODBC Driver 18 for SQL Server',
             'ODBC Driver 17 for SQL Server',
             'ODBC Driver 13 for SQL Server',
             'SQL Server',
@@ -93,14 +97,26 @@ def read_sql(server, database, username, password, query):
         
         for driver in drivers:
             try:
-                connection_string = (
-                    f"DRIVER={{{driver}}};"
-                    f"SERVER={server};"
-                    f"DATABASE={database};"
-                    f"UID={username};"
-                    f"PWD={password};"
-                    "Trusted_Connection=no;"
-                )
+                # Build connection string based on authentication method
+                if username and password:
+                    # SQL Server authentication
+                    connection_string = (
+                        f"DRIVER={{{driver}}};"
+                        f"SERVER={server};"
+                        f"DATABASE={database};"
+                        f"UID={username};"
+                        f"PWD={password};"
+                        "Trusted_Connection=no;"
+                    )
+                else:
+                    # Windows authentication
+                    connection_string = (
+                        f"DRIVER={{{driver}}};"
+                        f"SERVER={server};"
+                        f"DATABASE={database};"
+                        "Trusted_Connection=yes;"
+                        "TrustServerCertificate=yes;"
+                    )
                 
                 connection = pyodbc.connect(connection_string, timeout=30)
                 logger.info(f"Successfully connected using driver: {driver}")
@@ -139,45 +155,93 @@ def read_sql(server, database, username, password, query):
         logger.error(f"Error reading from SQL Server: {str(e)}")
         raise Exception(f"Failed to read from SQL Server: {str(e)}")
 
-def read_stored_proc(server, database, username, password, proc_name):
+def read_stored_proc(server, database, username=None, password=None, proc_name=None):
     """
     Execute a stored procedure and return results.
     
     Args:
         server: SQL Server hostname
         database: Database name
-        username: SQL Server username
-        password: SQL Server password
+        username: SQL Server username (optional for Windows auth)
+        password: SQL Server password (optional for Windows auth)
         proc_name: Name of the stored procedure
     
     Returns:
         pandas DataFrame
     """
     try:
-        connection_string = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server};DATABASE={database};UID={username};PWD={password}"
-        conn = pyodbc.connect(connection_string)
-        cursor = conn.cursor()
+        if not proc_name:
+            raise ValueError("Stored procedure name cannot be empty")
+
+        # Try different SQL Server drivers
+        drivers = [
+            'ODBC Driver 18 for SQL Server',
+            'ODBC Driver 17 for SQL Server',
+            'ODBC Driver 13 for SQL Server',
+            'SQL Server',
+            'SQL Server Native Client 11.0'
+        ]
         
-        # Execute stored procedure
-        cursor.execute(f"EXEC {proc_name}")
+        connection = None
+        last_error = None
         
-        # Fetch results
-        columns = [column[0] for column in cursor.description]
-        results = []
-        
-        while True:
-            rows = cursor.fetchmany(500000)  # Fetch in chunks
-            if not rows:
+        for driver in drivers:
+            try:
+                # Build connection string based on authentication method
+                if username and password:
+                    # SQL Server authentication
+                    connection_string = (
+                        f"DRIVER={{{driver}}};"
+                        f"SERVER={server};"
+                        f"DATABASE={database};"
+                        f"UID={username};"
+                        f"PWD={password};"
+                        "Trusted_Connection=no;"
+                    )
+                else:
+                    # Windows authentication
+                    connection_string = (
+                        f"DRIVER={{{driver}}};"
+                        f"SERVER={server};"
+                        f"DATABASE={database};"
+                        "Trusted_Connection=yes;"
+                        "TrustServerCertificate=yes;"
+                    )
+                
+                connection = pyodbc.connect(connection_string, timeout=30)
+                logger.info(f"Successfully connected using driver: {driver}")
                 break
-            results.extend(rows)
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Failed to connect using driver {driver}: {str(e)}")
+                continue
         
-        return pd.DataFrame.from_records(results, columns=columns)
+        if connection is None:
+            raise Exception(f"Failed to connect to SQL Server with any available driver. Last error: {str(last_error)}")
+        
+        try:
+            cursor = connection.cursor()
+            
+            # Execute stored procedure
+            cursor.execute(f"EXEC {proc_name}")
+            
+            # Fetch results
+            columns = [column[0] for column in cursor.description]
+            results = []
+            
+            while True:
+                rows = cursor.fetchmany(500000)  # Fetch in chunks
+                if not rows:
+                    break
+                results.extend(rows)
+            
+            return pd.DataFrame.from_records(results, columns=columns)
+        finally:
+            cursor.close()
+            connection.close()
     except Exception as e:
         logger.error(f"Error executing stored procedure: {str(e)}")
         raise Exception(f"Failed to execute stored procedure: {str(e)}")
-    finally:
-        if 'conn' in locals():
-            conn.close()
 
 def read_teradata(server, database, username, password, query):
     """
