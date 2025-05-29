@@ -178,7 +178,7 @@ def get_excluded_columns(mapping_df: pd.DataFrame) -> List[str]:
         raise Exception(f"Failed to get excluded columns: {str(e)}")
 
 def validate_mapping(source_df: pd.DataFrame, target_df: pd.DataFrame, 
-                    mapping: Dict[str, str]) -> Tuple[bool, str]:
+                    mapping: Dict[str, str], type_mapping: Dict[str, str] = None) -> Tuple[bool, str]:
     """
     Validate that the column mapping is complete and correct.
     
@@ -186,29 +186,51 @@ def validate_mapping(source_df: pd.DataFrame, target_df: pd.DataFrame,
         source_df: Source DataFrame
         target_df: Target DataFrame
         mapping: Dictionary mapping source columns to target columns
+        type_mapping: Optional dictionary mapping columns to desired data types
     
     Returns:
         Tuple of (is_valid, error_message)
     """
     try:
-        # Check if all source columns are mapped
-        unmapped_source = [col for col in source_df.columns if col not in mapping]
-        if unmapped_source:
-            return False, f"Source columns not mapped: {', '.join(unmapped_source)}"
+        # Remove None or empty string mappings
+        valid_mapping = {k: v for k, v in mapping.items() if v and not pd.isna(v)}
         
-        # Check if all target columns in mapping exist
-        missing_target = [col for col in mapping.values() 
+        # Check if any columns are mapped
+        if not valid_mapping:
+            return False, "No valid column mappings found"
+        
+        # Check if mapped target columns exist
+        missing_target = [col for col in valid_mapping.values() 
                          if col not in target_df.columns]
         if missing_target:
             return False, f"Target columns not found: {', '.join(missing_target)}"
         
         # Validate data types compatibility
-        for src_col, tgt_col in mapping.items():
-            src_dtype = source_df[src_col].dtype
-            tgt_dtype = target_df[tgt_col].dtype
+        for src_col, tgt_col in valid_mapping.items():
+            src_dtype = str(source_df[src_col].dtype)
+            tgt_dtype = str(target_df[tgt_col].dtype)
             
-            if not are_dtypes_compatible(src_dtype, tgt_dtype):
-                return False, f"Incompatible data types for {src_col} ({src_dtype}) and {tgt_col} ({tgt_dtype})"
+            # If type_mapping is provided, use it to check compatibility
+            if type_mapping and src_col in type_mapping:
+                desired_type = type_mapping[src_col]
+                try:
+                    # Try converting a sample of the data to the desired type
+                    sample = source_df[src_col].head(100)
+                    if desired_type == 'int64':
+                        pd.to_numeric(sample, downcast='integer')
+                    elif desired_type == 'float64':
+                        pd.to_numeric(sample, downcast='float')
+                    elif desired_type == 'datetime64[ns]':
+                        pd.to_datetime(sample)
+                    elif desired_type == 'bool':
+                        sample.astype(bool)
+                    # string type conversion is always possible
+                except Exception as e:
+                    return False, f"Cannot convert {src_col} to type {desired_type}: {str(e)}"
+            else:
+                # Without type_mapping, check basic compatibility
+                if not are_dtypes_compatible(src_dtype, tgt_dtype):
+                    return False, f"Incompatible data types for {src_col} ({src_dtype}) and {tgt_col} ({tgt_dtype})"
         
         return True, "Mapping validated successfully"
     
@@ -216,33 +238,43 @@ def validate_mapping(source_df: pd.DataFrame, target_df: pd.DataFrame,
         logger.error(f"Error in validate_mapping: {str(e)}")
         raise Exception(f"Failed to validate mapping: {str(e)}")
 
-def are_dtypes_compatible(dtype1: np.dtype, dtype2: np.dtype) -> bool:
+def are_dtypes_compatible(dtype1: str, dtype2: str) -> bool:
     """
     Check if two data types are compatible for comparison.
     
     Args:
-        dtype1: First data type
-        dtype2: Second data type
+        dtype1: First data type as string
+        dtype2: Second data type as string
     
     Returns:
         bool indicating whether the types are compatible
     """
-    # Convert dtypes to strings for easier comparison
-    dtype1_str = str(dtype1)
-    dtype2_str = str(dtype2)
-    
     # Define groups of compatible types
-    numeric_types = {'int32', 'int64', 'float32', 'float64'}
-    string_types = {'object', 'string'}
-    datetime_types = {'datetime64', 'datetime64[ns]'}
+    type_groups = {
+        'numeric': {'int32', 'int64', 'float32', 'float64', 'int', 'float',
+                   'integer', 'numeric', 'decimal', 'double', 'real'},
+        'string': {'object', 'string', 'str', 'varchar', 'nvarchar', 'char', 
+                  'nchar', 'text', 'ntext'},
+        'datetime': {'datetime64', 'datetime64[ns]', 'datetime', 'timestamp', 'date'},
+        'boolean': {'bool', 'boolean', 'bit'}
+    }
     
-    # Check if both types belong to the same group
-    if dtype1_str in numeric_types and dtype2_str in numeric_types:
+    # Convert type strings to lowercase for comparison
+    dtype1 = dtype1.lower()
+    dtype2 = dtype2.lower()
+    
+    # Check if types are in the same group
+    for group_types in type_groups.values():
+        if any(t in dtype1 for t in group_types) and any(t in dtype2 for t in group_types):
+            return True
+    
+    # Special cases
+    if ('int' in dtype1 or 'float' in dtype1) and ('int' in dtype2 or 'float' in dtype2):
         return True
-    if dtype1_str in string_types and dtype2_str in string_types:
-        return True
-    if dtype1_str in datetime_types and dtype2_str in datetime_types:
+    
+    # String types can accept any type
+    if any(t in dtype1 for t in type_groups['string']) or any(t in dtype2 for t in type_groups['string']):
         return True
     
     # Check for exact match
-    return dtype1_str == dtype2_str
+    return dtype1 == dtype2
