@@ -285,126 +285,127 @@ def main():
             
             if compare_button:
                 try:
-                    progress_text = st.empty()
-                    progress_bar = st.progress(0)
-                    
-                    # Get the actual join columns and their mappings
-                    progress_text.text("Preparing join columns...")
-                    join_cols = []
-                    join_mappings = {}
-                    for col_pair in selected_join_columns:
-                        src_col = col_pair.split(" → ")[0]
-                        tgt_col = valid_mappings[src_col]
-                        join_cols.append(src_col)
-                        join_mappings[src_col] = tgt_col
-                    
-                    progress_bar.progress(10)
-                    
-                    # Apply data type conversions
-                    progress_text.text("Converting data types...")
-                    for col, dtype in dtype_mapping.items():
-                        try:
-                            if dtype == 'int64':
-                                source_data[col] = pd.to_numeric(source_data[col], errors='coerce').astype('Int64')
-                            elif dtype == 'float64':
-                                source_data[col] = pd.to_numeric(source_data[col], errors='coerce')
-                            elif dtype == 'datetime64[ns]':
-                                source_data[col] = pd.to_datetime(source_data[col], errors='coerce')
-                            elif dtype == 'bool':
-                                source_data[col] = source_data[col].astype('boolean')
-                            # string type conversion is not needed
-                        except Exception as e:
-                            st.error(f"❌ Error converting {col} to {dtype}: {str(e)}")
-                            raise Exception(f"Data type conversion failed for column {col}")
-                    
-                    progress_bar.progress(20)
-                    
-                    # Generate reports with progress updates
-                    progress_text.text("Generating DataCompy report...")
-                    datacompy_report = generate_datacompy_report(
-                        source_data, target_data, join_cols, edited_mapping, join_mappings
-                    )
-                    progress_bar.progress(40)
-                    
-                    progress_text.text("Generating Y-Data Profile...")
-                    ydata_report = generate_ydata_profile(
-                        source_data, target_data, edited_mapping
-                    )
-                    progress_bar.progress(60)
-                    
-                    progress_text.text("Generating Regression report...")
-                    regression_report = generate_regression_report(
-                        source_data, target_data, edited_mapping, dtype_mapping
-                    )
-                    progress_bar.progress(80)
-                    
-                    progress_text.text("Generating Difference report...")
-                    difference_report = generate_difference_report(
-                        source_data, target_data, join_cols, edited_mapping, join_mappings
-                    )
-                    progress_bar.progress(90)
-                    
-                    progress_text.text("Creating final reports...")
-                    consolidated_report = create_consolidated_report(
-                        datacompy_report,
-                        ydata_report,
-                        regression_report,
-                        difference_report
-                    )
-                    progress_bar.progress(100)
-                    progress_text.text("✅ Comparison completed!")
-                    
-                    # Provide download links
-                    st.success("✅ Comparison completed successfully!")
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.download_button(
-                            label="📥 Download Consolidated Report",
-                            data=consolidated_report,
-                            file_name=f"consolidated_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-                            mime="application/zip",
-                            help="Download all reports in a single ZIP file"
+                    with st.spinner("Generating comparison reports..."):
+                        progress_text = st.empty()
+                        progress_bar = st.progress(0)
+                        
+                        # Get the actual join columns and their mappings
+                        progress_text.text("Preparing join columns...")
+                        join_cols = []
+                        join_mappings = {}
+                        for col_pair in selected_join_columns:
+                            src_col = col_pair.split(" → ")[0]
+                            tgt_col = valid_mappings[src_col]
+                            join_cols.append(src_col)
+                            join_mappings[src_col] = tgt_col
+                        
+                        progress_bar.progress(10)
+                        
+                        # Apply data type conversions
+                        progress_text.text("Converting data types...")
+                        for col, dtype in dtype_mapping.items():
+                            try:
+                                if dtype == 'int64':
+                                    source_data[col] = pd.to_numeric(source_data[col], errors='coerce').astype('Int64')
+                                elif dtype == 'float64':
+                                    source_data[col] = pd.to_numeric(source_data[col], errors='coerce')
+                                elif dtype == 'datetime64[ns]':
+                                    source_data[col] = pd.to_datetime(source_data[col], errors='coerce')
+                                elif dtype == 'bool':
+                                    source_data[col] = source_data[col].astype('boolean')
+                                # string type conversion is not needed
+                            except Exception as e:
+                                st.error(f"❌ Error converting {col} to {dtype}: {str(e)}")
+                                raise Exception(f"Data type conversion failed for column {col}")
+                        
+                        progress_bar.progress(20)
+                        
+                        # Generate reports with progress updates
+                        progress_text.text("Generating DataCompy report...")
+                        datacompy_report = generate_datacompy_report(
+                            source_data, target_data, join_cols, edited_mapping, join_mappings
                         )
-                    
-                    with col2:
-                        st.download_button(
-                            label="📊 Download Individual Reports",
-                            data=create_individual_reports_zip(
-                                datacompy_report,
-                                ydata_report,
-                                regression_report,
-                                difference_report
-                            ),
-                            file_name=f"individual_reports_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-                            mime="application/zip",
-                            help="Download reports as separate files in a ZIP"
+                        progress_bar.progress(40)
+                        
+                        progress_text.text("Generating Y-Data Profile...")
+                        ydata_report = generate_ydata_profile(
+                            source_data, target_data, edited_mapping
                         )
+                        progress_bar.progress(60)
+                        
+                        progress_text.text("Generating Regression report...")
+                        regression_report = generate_regression_report(
+                            source_data, target_data, edited_mapping, dtype_mapping
+                        )
+                        progress_bar.progress(80)
+                        
+                        progress_text.text("Generating Difference report...")
+                        difference_report = generate_difference_report(
+                            source_data, target_data, join_cols, edited_mapping, join_mappings
+                        )
+                        progress_bar.progress(90)
+                        
+                        progress_text.text("Creating final reports...")
+                        consolidated_report = create_consolidated_report(
+                            datacompy_report,
+                            ydata_report,
+                            regression_report,
+                            difference_report
+                        )
+                        progress_bar.progress(100)
+                        progress_text.text("✅ Comparison completed!")
+                        
+                        # Provide download links
+                        st.success("✅ Comparison completed successfully!")
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.download_button(
+                                label="📥 Download Consolidated Report",
+                                data=consolidated_report,
+                                file_name=f"consolidated_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                                mime="application/zip",
+                                help="Download all reports in a single ZIP file"
+                            )
+                        
+                        with col2:
+                            st.download_button(
+                                label="📊 Download Individual Reports",
+                                data=create_individual_reports_zip(
+                                    datacompy_report,
+                                    ydata_report,
+                                    regression_report,
+                                    difference_report
+                                ),
+                                file_name=f"individual_reports_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                                mime="application/zip",
+                                help="Download reports as separate files in a ZIP"
+                            )
+                
+                except Exception as e:
+                    # Clear progress indicators
+                    if 'progress_text' in locals():
+                        progress_text.empty()
+                    if 'progress_bar' in locals():
+                        progress_bar.empty()
                     
-            except Exception as e:
-                # Clear progress indicators
-                if 'progress_text' in locals():
-                    progress_text.empty()
-                if 'progress_bar' in locals():
-                    progress_bar.empty()
-                
-                # Show detailed error message
-                error_msg = str(e)
-                if "Failed to read file" in error_msg:
-                    st.error("❌ Error reading file. Please check the file format and delimiter.")
-                    st.info("💡 Try selecting a different delimiter or check if the file is properly formatted.")
-                elif "SQL Server" in error_msg:
-                    st.error("❌ Database connection error. Please check your connection details.")
-                    st.info("💡 Verify your server address, credentials, and ensure the database is accessible.")
-                elif "data type conversion" in error_msg:
-                    st.error("❌ Data type conversion error. Please review your data type mappings.")
-                    st.info("💡 Some columns may contain values incompatible with the selected data types.")
-                else:
-                    st.error(f"❌ Error during comparison: {error_msg}")
-                
-                # Log the full error
-                logger.error(f"Comparison error: {error_msg}", exc_info=True)
+                    # Show detailed error message
+                    error_msg = str(e)
+                    if "Failed to read file" in error_msg:
+                        st.error("❌ Error reading file. Please check the file format and delimiter.")
+                        st.info("💡 Try selecting a different delimiter or check if the file is properly formatted.")
+                    elif "SQL Server" in error_msg:
+                        st.error("❌ Database connection error. Please check your connection details.")
+                        st.info("💡 Verify your server address, credentials, and ensure the database is accessible.")
+                    elif "data type conversion" in error_msg:
+                        st.error("❌ Data type conversion error. Please review your data type mappings.")
+                        st.info("💡 Some columns may contain values incompatible with the selected data types.")
+                    else:
+                        st.error(f"❌ Error during comparison: {error_msg}")
+                    
+                    # Log the full error
+                    logger.error(f"Comparison error: {error_msg}", exc_info=True)
 
 def handle_data_input(prefix, data_type):
     """Handle different types of data input based on the selected type."""
