@@ -32,13 +32,20 @@ def auto_map_columns(source_cols: List[str], target_cols: List[str], threshold: 
         Dict mapping source columns to target columns
     """
     try:
+        # Convert source_cols and target_cols to lists if they're not already
+        source_cols = list(source_cols)
+        target_cols = list(target_cols)
+        
+        # Initialize mapping dictionary and used targets set
         mapping = {}
         used_targets = set()
         
         # First pass: exact matches (case-insensitive)
         for src_col in source_cols:
+            src_col_str = str(src_col)  # Convert to string to handle non-string column names
             for tgt_col in target_cols:
-                if src_col.lower() == tgt_col.lower() and tgt_col not in used_targets:
+                tgt_col_str = str(tgt_col)  # Convert to string to handle non-string column names
+                if src_col_str.lower() == tgt_col_str.lower() and tgt_col not in used_targets:
                     mapping[src_col] = tgt_col
                     used_targets.add(tgt_col)
                     break
@@ -46,12 +53,14 @@ def auto_map_columns(source_cols: List[str], target_cols: List[str], threshold: 
         # Second pass: fuzzy matching for remaining columns
         unmapped_sources = [col for col in source_cols if col not in mapping]
         for src_col in unmapped_sources:
+            src_col_str = str(src_col)  # Convert to string for fuzzy matching
             best_match = None
             best_score = threshold
             
             for tgt_col in target_cols:
                 if tgt_col not in used_targets:
-                    score = string_similarity(src_col, tgt_col)
+                    tgt_col_str = str(tgt_col)  # Convert to string for fuzzy matching
+                    score = string_similarity(src_col_str, tgt_col_str)
                     if score > best_score:
                         best_score = score
                         best_match = tgt_col
@@ -59,6 +68,9 @@ def auto_map_columns(source_cols: List[str], target_cols: List[str], threshold: 
             if best_match:
                 mapping[src_col] = best_match
                 used_targets.add(best_match)
+            else:
+                # If no match found, map to None (will be shown as empty in UI)
+                mapping[src_col] = None
         
         logger.info(f"Auto-mapped {len(mapping)} columns out of {len(source_cols)} source columns")
         return mapping
