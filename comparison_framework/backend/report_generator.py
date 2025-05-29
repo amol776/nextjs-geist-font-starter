@@ -68,15 +68,33 @@ def generate_datacompy_report(source_df: pd.DataFrame, target_df: pd.DataFrame,
             elif target_compare[col].dtype == 'datetime64[ns]':
                 source_compare[col] = pd.to_datetime(source_compare[col], errors='coerce')
 
+        # Ensure all columns are strings to prevent type comparison issues
+        source_compare.columns = source_compare.columns.astype(str)
+        target_compare.columns = target_compare.columns.astype(str)
+
         # Create comparison object
-        comparison = datacompy.Compare(
-            df1=source_compare,
-            df2=target_compare,
-            join_columns=join_columns,
-            df1_name='Source',
-            df2_name='Target',
-            on_index=False
-        )
+        try:
+            comparison = datacompy.Compare(
+                df1=source_compare,
+                df2=target_compare,
+                join_columns=join_columns,
+                df1_name='Source',
+                df2_name='Target',
+                on_index=False
+            )
+        except Exception as e:
+            logger.error(f"Error creating comparison object: {str(e)}")
+            # Try alternative comparison with converted data types
+            source_compare = source_compare.astype(str)
+            target_compare = target_compare.astype(str)
+            comparison = datacompy.Compare(
+                df1=source_compare,
+                df2=target_compare,
+                join_columns=join_columns,
+                df1_name='Source',
+                df2_name='Target',
+                on_index=False
+            )
         
         # Generate report
         output = BytesIO()
@@ -90,15 +108,23 @@ def generate_datacompy_report(source_df: pd.DataFrame, target_df: pd.DataFrame,
                          comparison.all_columns_match, comparison.matches()]
             }).to_excel(writer, sheet_name='Summary', index=False)
             
-            # Write mismatched columns
-            if comparison.column_stats is not None:
-                comparison.column_stats.to_excel(writer, sheet_name='Column Stats', index=True)
+            # Write column stats
+            if hasattr(comparison, 'column_stats') and comparison.column_stats is not None:
+                if isinstance(comparison.column_stats, pd.DataFrame):
+                    comparison.column_stats.to_excel(writer, sheet_name='Column Stats', index=True)
+                else:
+                    pd.DataFrame(comparison.column_stats).to_excel(writer, sheet_name='Column Stats', index=True)
             
-            # Write sample mismatched rows
-            if not comparison.all_rows_match:
-                comparison.sample_mismatch(sample_size=10).to_excel(writer, 
-                                                                  sheet_name='Sample Mismatches', 
-                                                                  index=True)
+            # Write sample mismatches
+            if hasattr(comparison, 'sample_mismatch'):
+                mismatches = comparison.sample_mismatch(sample_size=10)
+                if isinstance(mismatches, pd.DataFrame):
+                    mismatches.to_excel(writer, sheet_name='Sample Mismatches', index=True)
+                elif isinstance(mismatches, list) and mismatches:
+                    pd.DataFrame(mismatches).to_excel(writer, sheet_name='Sample Mismatches', index=True)
+                else:
+                    pd.DataFrame({'Message': ['No mismatches found']}).to_excel(
+                        writer, sheet_name='Sample Mismatches', index=False)
         
         output.seek(0)
         return output
