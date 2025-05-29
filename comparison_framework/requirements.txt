@@ -1,0 +1,14 @@
+streamlit>=1.28.0
+pandas>=2.1.0
+numpy>=1.24.0
+openpyxl>=3.1.0
+xlsxwriter>=3.1.0
+sqlalchemy>=2.0.0
+pyodbc>=4.0.39
+requests>=2.31.0
+python-dotenv>=1.0.0
+datacompy>=0.10.0
+ydata-profiling>=4.6.0
+pyarrow>=14.0.1  # For parquet support
+fastparquet>=2023.10.1
+zipfile38>=0.0.3
