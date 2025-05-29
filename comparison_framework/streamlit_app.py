@@ -106,27 +106,71 @@ def main():
         column_mapping = auto_map_columns(source_data.columns, target_data.columns)
         
         st.header("Column Mapping")
+        
+        # Create initial mapping DataFrame
         mapping_df = pd.DataFrame({
-            'Source Column': column_mapping.keys(),
-            'Target Column': column_mapping.values(),
-            'Exclude from Comparison': False
+            'Source Column': list(column_mapping.keys()),
+            'Target Column': list(column_mapping.values()),
+            'Exclude from Comparison': [False] * len(column_mapping)
         })
         
-        edited_mapping = st.data_editor(
-            mapping_df,
-            hide_index=True,
-            use_container_width=True
-        )
+        # Allow manual editing of mappings
+        st.write("You can edit the mappings below. Select target columns from the dropdown and check boxes to exclude columns from comparison.")
+        
+        # Create a selection widget for each source column
+        edited_mappings = []
+        for idx, row in mapping_df.iterrows():
+            col1, col2, col3 = st.columns([2, 2, 1])
+            
+            with col1:
+                st.text(row['Source Column'])  # Source column (read-only)
+            
+            with col2:
+                # Dropdown for target column selection
+                selected_target = st.selectbox(
+                    f"Map to target column",
+                    options=[''] + list(target_data.columns),
+                    index=0 if row['Target Column'] not in target_data.columns 
+                          else list(target_data.columns).index(row['Target Column']) + 1,
+                    key=f"target_col_{idx}"
+                )
+            
+            with col3:
+                # Checkbox for exclusion
+                exclude = st.checkbox(
+                    "Exclude",
+                    value=row['Exclude from Comparison'],
+                    key=f"exclude_{idx}"
+                )
+            
+            edited_mappings.append({
+                'Source Column': row['Source Column'],
+                'Target Column': selected_target if selected_target else None,
+                'Exclude from Comparison': exclude
+            })
+        
+        # Convert edited mappings to DataFrame
+        edited_mapping = pd.DataFrame(edited_mappings)
         
         # Join columns selection
         st.subheader("Join Columns")
+        # Only show mapped columns (where target is not None) for join selection
+        valid_mappings = {src: tgt for src, tgt in 
+                         zip(edited_mapping['Source Column'], edited_mapping['Target Column']) 
+                         if tgt and not pd.isna(tgt)}
+        
         available_columns = [(f"{src} → {tgt}", src) 
-                           for src, tgt in column_mapping.items()]
-        selected_join_columns = st.multiselect(
-            "Select Join Columns",
-            options=[col[0] for col in available_columns],
-            help="Select one or more columns to join the datasets"
-        )
+                           for src, tgt in valid_mappings.items()]
+        
+        if available_columns:
+            selected_join_columns = st.multiselect(
+                "Select Join Columns",
+                options=[col[0] for col in available_columns],
+                help="Select one or more columns to join the datasets"
+            )
+        else:
+            st.warning("No valid column mappings available for join selection. Please map at least one column.")
+            selected_join_columns = []
         
         # Data type mapping
         st.subheader("Data Type Mapping")
@@ -141,46 +185,83 @@ def main():
             )
         
         # Compare button
-        if st.button("Compare", type="primary"):
+        if st.button("Compare", type="primary", disabled=not selected_join_columns):
             try:
                 with st.spinner("Generating comparison reports..."):
-                    # Get the actual join columns from the mapping
-                    join_cols = [col.split(" → ")[0] for col in selected_join_columns]
+                    # Get the actual join columns and their mappings
+                    join_cols = []
+                    join_mappings = {}
+                    for col_pair in selected_join_columns:
+                        src_col = col_pair.split(" → ")[0]
+                        tgt_col = valid_mappings[src_col]
+                        join_cols.append(src_col)
+                        join_mappings[src_col] = tgt_col
                     
-                    # Generate reports
-                    datacompy_report = generate_datacompy_report(
-                        source_data, target_data, join_cols, edited_mapping
-                    )
+                    # Create mapping dictionary from edited_mapping DataFrame
+                    column_mapping = dict(zip(
+                        edited_mapping['Source Column'],
+                        edited_mapping['Target Column']
+                    ))
                     
-                    ydata_report = generate_ydata_profile(
-                        source_data, target_data, edited_mapping
-                    )
+                    # Filter out unmapped columns (where Target Column is None or empty)
+                    column_mapping = {k: v for k, v in column_mapping.items() 
+                                   if v and not pd.isna(v)}
                     
-                    regression_report = generate_regression_report(
-                        source_data, target_data, edited_mapping, dtype_mapping
-                    )
+                    with st.spinner("Generating DataCompy report..."):
+                        datacompy_report = generate_datacompy_report(
+                            source_data, target_data, join_cols, edited_mapping, join_mappings
+                        )
                     
-                    difference_report = generate_difference_report(
-                        source_data, target_data, join_cols, edited_mapping
-                    )
+                    with st.spinner("Generating Y-Data Profile..."):
+                        ydata_report = generate_ydata_profile(
+                            source_data, target_data, edited_mapping
+                        )
                     
-                    # Create consolidated report
-                    consolidated_report = create_consolidated_report(
-                        datacompy_report,
-                        ydata_report,
-                        regression_report,
-                        difference_report
-                    )
+                    with st.spinner("Generating Regression report..."):
+                        regression_report = generate_regression_report(
+                            source_data, target_data, edited_mapping, dtype_mapping
+                        )
+                    
+                    with st.spinner("Generating Difference report..."):
+                        difference_report = generate_difference_report(
+                            source_data, target_data, join_cols, edited_mapping, join_mappings
+                        )
+                    
+                    with st.spinner("Creating consolidated report..."):
+                        consolidated_report = create_consolidated_report(
+                            datacompy_report,
+                            ydata_report,
+                            regression_report,
+                            difference_report
+                        )
                     
                     # Provide download links
-                    st.success("Comparison completed successfully!")
+                    st.success("✅ Comparison completed successfully!")
                     
-                    st.download_button(
-                        label="Download Consolidated Report",
-                        data=consolidated_report,
-                        file_name=f"consolidated_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-                        mime="application/zip"
-                    )
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.download_button(
+                            label="📥 Download Consolidated Report",
+                            data=consolidated_report,
+                            file_name=f"consolidated_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                            mime="application/zip",
+                            help="Download all reports in a single ZIP file"
+                        )
+                    
+                    with col2:
+                        st.download_button(
+                            label="📊 Download Individual Reports",
+                            data=create_individual_reports_zip(
+                                datacompy_report,
+                                ydata_report,
+                                regression_report,
+                                difference_report
+                            ),
+                            file_name=f"individual_reports_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                            mime="application/zip",
+                            help="Download reports as separate files in a ZIP"
+                        )
                     
             except Exception as e:
                 st.error(f"Error during comparison: {str(e)}")
