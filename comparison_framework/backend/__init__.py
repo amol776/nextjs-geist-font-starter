@@ -21,7 +21,8 @@ from .report_generator import (
     generate_ydata_profile,
     generate_regression_report,
     generate_difference_report,
-    create_consolidated_report
+    create_consolidated_report,
+    create_individual_reports_zip
 )
 
 from .utils import (
@@ -61,6 +62,7 @@ __all__ = [
     'generate_regression_report',
     'generate_difference_report',
     'create_consolidated_report',
+    'create_individual_reports_zip'
     
     # Utils
     'setup_logger',
