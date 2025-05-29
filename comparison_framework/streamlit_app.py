@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, date
 import os
+from typing import Dict, List, Optional, Union
 from backend.data_reader import (
     read_csv_dat,
     read_sql,
@@ -34,21 +35,48 @@ logger = setup_logger()
 
 # Define the type mapping dictionary
 TYPE_MAPPING = {
-    'int': 'int32',
+    # Integer types
     'int': 'int64',
+    'int32': 'int64',
+    'int64': 'int64',
+    'integer': 'int64',
     'numeric': 'int64',
     'bigint': 'int64',
-    'smalllint': 'int64',
+    'smallint': 'int64',
+    'tinyint': 'int64',
+    
+    # Float types
+    'Float': 'float64',
+    'float': 'float64',
+    'float32': 'float64',
+    'float64': 'float64',
+    'decimal': 'float64',
+    'double': 'float64',
+    'real': 'float64',
+    
+    # String types
     'varchar': 'string',
     'nvarchar': 'string',
     'char': 'string',
+    'nchar': 'string',
+    'text': 'string',
+    'ntext': 'string',
+    'string': 'string',
+    'object': 'string',
+    
+    # Date/Time types
     'date': 'datetime64[ns]',
     'datetime': 'datetime64[ns]',
-    'decimal': 'float',
-    'Float': 'float',
+    'datetime64': 'datetime64[ns]',
+    'timestamp': 'datetime64[ns]',
+    
+    # Boolean types
+    'Boolean': 'bool',
+    'bool': 'bool',
     'bit': 'bool',
-    'nchar': 'char',
-    'Boolean': 'bool'
+    
+    # Default type
+    'unknown': 'string'
 }
 
 def main():
@@ -132,7 +160,8 @@ def main():
                     options=[''] + list(target_data.columns),
                     index=0 if row['Target Column'] not in target_data.columns 
                           else list(target_data.columns).index(row['Target Column']) + 1,
-                    key=f"target_col_{idx}"
+                    key=f"target_col_{idx}",
+                    help="Select the corresponding target column"
                 )
             
             with col3:
@@ -140,7 +169,8 @@ def main():
                 exclude = st.checkbox(
                     "Exclude",
                     value=row['Exclude from Comparison'],
-                    key=f"exclude_{idx}"
+                    key=f"exclude_{idx}",
+                    help="Check to exclude this column from comparison"
                 )
             
             edited_mappings.append({
@@ -152,15 +182,26 @@ def main():
         # Convert edited mappings to DataFrame
         edited_mapping = pd.DataFrame(edited_mappings)
         
+        # Create valid mappings dictionary (excluding None/empty values and excluded columns)
+        valid_mappings = {
+            row['Source Column']: row['Target Column']
+            for _, row in edited_mapping.iterrows()
+            if row['Target Column'] and not pd.isna(row['Target Column']) and not row['Exclude from Comparison']
+        }
+        
+        # Show mapping summary
+        if valid_mappings:
+            st.success(f"✅ {len(valid_mappings)} columns mapped successfully")
+        else:
+            st.warning("⚠️ No valid column mappings. Please map at least one column.")
+        
         # Join columns selection
         st.subheader("Join Columns")
-        # Only show mapped columns (where target is not None) for join selection
-        valid_mappings = {src: tgt for src, tgt in 
-                         zip(edited_mapping['Source Column'], edited_mapping['Target Column']) 
-                         if tgt and not pd.isna(tgt)}
         
+        # Create list of available join columns from valid mappings
         available_columns = [(f"{src} → {tgt}", src) 
-                           for src, tgt in valid_mappings.items()]
+                           for src, tgt in valid_mappings.items()
+                           if not edited_mapping[edited_mapping['Source Column'] == src]['Exclude from Comparison'].iloc[0]]
         
         if available_columns:
             selected_join_columns = st.multiselect(
@@ -176,19 +217,79 @@ def main():
         st.subheader("Data Type Mapping")
         dtype_mapping = {}
         for col in source_data.columns:
+            # Get current column type
             current_type = str(source_data[col].dtype)
-            mapped_type = TYPE_MAPPING.get(current_type, current_type)
+            
+            # Map numpy/pandas types to our type mapping
+            if 'int' in current_type:
+                base_type = 'int'
+            elif 'float' in current_type:
+                base_type = 'Float'
+            elif 'datetime' in current_type:
+                base_type = 'datetime'
+            elif 'bool' in current_type:
+                base_type = 'Boolean'
+            elif 'object' in current_type:
+                # Try to infer type from data
+                sample = source_data[col].dropna().head(100)
+                if len(sample) > 0:
+                    if all(isinstance(x, (int, np.integer)) for x in sample):
+                        base_type = 'int'
+                    elif all(isinstance(x, (float, np.floating)) for x in sample):
+                        base_type = 'Float'
+                    elif all(isinstance(x, bool) for x in sample):
+                        base_type = 'Boolean'
+                    elif all(isinstance(x, (datetime.date, datetime.datetime, pd.Timestamp)) for x in sample):
+                        base_type = 'datetime'
+                    else:
+                        base_type = 'varchar'
+                else:
+                    base_type = 'varchar'
+            else:
+                base_type = 'varchar'
+            
+            # Get mapped type from TYPE_MAPPING
+            mapped_type = TYPE_MAPPING.get(base_type, TYPE_MAPPING['varchar'])
+            
+            # Create options list from TYPE_MAPPING values
+            type_options = sorted(set(TYPE_MAPPING.values()))
+            
+            # Create the selectbox with proper type selection
             dtype_mapping[col] = st.selectbox(
                 f"Type for {col}",
-                options=list(set(TYPE_MAPPING.values())),
-                index=list(set(TYPE_MAPPING.values())).index(mapped_type)
+                options=type_options,
+                index=type_options.index(mapped_type),
+                help=f"Current type: {current_type}"
             )
         
-        # Compare button
-        if st.button("Compare", type="primary", disabled=not selected_join_columns):
-            try:
-                with st.spinner("Generating comparison reports..."):
+        # Validate mappings and show comparison button
+        if valid_mappings:
+            # Validate data type compatibility
+            is_valid, error_message = validate_mapping(
+                source_data, target_data, 
+                valid_mappings, 
+                dtype_mapping
+            )
+            
+            if not is_valid:
+                st.error(f"❌ Mapping validation failed: {error_message}")
+                st.info("💡 Please review your column mappings and data types.")
+            
+            # Compare button
+            compare_button = st.button(
+                "Compare",
+                type="primary",
+                disabled=not (selected_join_columns and is_valid),
+                help="Generate comparison reports for the mapped columns"
+            )
+            
+            if compare_button:
+                try:
+                    progress_text = st.empty()
+                    progress_bar = st.progress(0)
+                    
                     # Get the actual join columns and their mappings
+                    progress_text.text("Preparing join columns...")
                     join_cols = []
                     join_mappings = {}
                     for col_pair in selected_join_columns:
@@ -197,43 +298,61 @@ def main():
                         join_cols.append(src_col)
                         join_mappings[src_col] = tgt_col
                     
-                    # Create mapping dictionary from edited_mapping DataFrame
-                    column_mapping = dict(zip(
-                        edited_mapping['Source Column'],
-                        edited_mapping['Target Column']
-                    ))
+                    progress_bar.progress(10)
                     
-                    # Filter out unmapped columns (where Target Column is None or empty)
-                    column_mapping = {k: v for k, v in column_mapping.items() 
-                                   if v and not pd.isna(v)}
+                    # Apply data type conversions
+                    progress_text.text("Converting data types...")
+                    for col, dtype in dtype_mapping.items():
+                        try:
+                            if dtype == 'int64':
+                                source_data[col] = pd.to_numeric(source_data[col], errors='coerce').astype('Int64')
+                            elif dtype == 'float64':
+                                source_data[col] = pd.to_numeric(source_data[col], errors='coerce')
+                            elif dtype == 'datetime64[ns]':
+                                source_data[col] = pd.to_datetime(source_data[col], errors='coerce')
+                            elif dtype == 'bool':
+                                source_data[col] = source_data[col].astype('boolean')
+                            # string type conversion is not needed
+                        except Exception as e:
+                            st.error(f"❌ Error converting {col} to {dtype}: {str(e)}")
+                            raise Exception(f"Data type conversion failed for column {col}")
                     
-                    with st.spinner("Generating DataCompy report..."):
-                        datacompy_report = generate_datacompy_report(
-                            source_data, target_data, join_cols, edited_mapping, join_mappings
-                        )
+                    progress_bar.progress(20)
                     
-                    with st.spinner("Generating Y-Data Profile..."):
-                        ydata_report = generate_ydata_profile(
-                            source_data, target_data, edited_mapping
-                        )
+                    # Generate reports with progress updates
+                    progress_text.text("Generating DataCompy report...")
+                    datacompy_report = generate_datacompy_report(
+                        source_data, target_data, join_cols, edited_mapping, join_mappings
+                    )
+                    progress_bar.progress(40)
                     
-                    with st.spinner("Generating Regression report..."):
-                        regression_report = generate_regression_report(
-                            source_data, target_data, edited_mapping, dtype_mapping
-                        )
+                    progress_text.text("Generating Y-Data Profile...")
+                    ydata_report = generate_ydata_profile(
+                        source_data, target_data, edited_mapping
+                    )
+                    progress_bar.progress(60)
                     
-                    with st.spinner("Generating Difference report..."):
-                        difference_report = generate_difference_report(
-                            source_data, target_data, join_cols, edited_mapping, join_mappings
-                        )
+                    progress_text.text("Generating Regression report...")
+                    regression_report = generate_regression_report(
+                        source_data, target_data, edited_mapping, dtype_mapping
+                    )
+                    progress_bar.progress(80)
                     
-                    with st.spinner("Creating consolidated report..."):
-                        consolidated_report = create_consolidated_report(
-                            datacompy_report,
-                            ydata_report,
-                            regression_report,
-                            difference_report
-                        )
+                    progress_text.text("Generating Difference report...")
+                    difference_report = generate_difference_report(
+                        source_data, target_data, join_cols, edited_mapping, join_mappings
+                    )
+                    progress_bar.progress(90)
+                    
+                    progress_text.text("Creating final reports...")
+                    consolidated_report = create_consolidated_report(
+                        datacompy_report,
+                        ydata_report,
+                        regression_report,
+                        difference_report
+                    )
+                    progress_bar.progress(100)
+                    progress_text.text("✅ Comparison completed!")
                     
                     # Provide download links
                     st.success("✅ Comparison completed successfully!")
@@ -264,8 +383,28 @@ def main():
                         )
                     
             except Exception as e:
-                st.error(f"Error during comparison: {str(e)}")
-                logger.error(f"Comparison error: {str(e)}")
+                # Clear progress indicators
+                if 'progress_text' in locals():
+                    progress_text.empty()
+                if 'progress_bar' in locals():
+                    progress_bar.empty()
+                
+                # Show detailed error message
+                error_msg = str(e)
+                if "Failed to read file" in error_msg:
+                    st.error("❌ Error reading file. Please check the file format and delimiter.")
+                    st.info("💡 Try selecting a different delimiter or check if the file is properly formatted.")
+                elif "SQL Server" in error_msg:
+                    st.error("❌ Database connection error. Please check your connection details.")
+                    st.info("💡 Verify your server address, credentials, and ensure the database is accessible.")
+                elif "data type conversion" in error_msg:
+                    st.error("❌ Data type conversion error. Please review your data type mappings.")
+                    st.info("💡 Some columns may contain values incompatible with the selected data types.")
+                else:
+                    st.error(f"❌ Error during comparison: {error_msg}")
+                
+                # Log the full error
+                logger.error(f"Comparison error: {error_msg}", exc_info=True)
 
 def handle_data_input(prefix, data_type):
     """Handle different types of data input based on the selected type."""
