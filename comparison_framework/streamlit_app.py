@@ -436,16 +436,26 @@ def handle_data_input(prefix: str, data_type: str) -> Optional[pd.DataFrame]:
             with st.expander(f"{data_type} Connection Details"):
                 server = st.text_input("Server", key=f"{prefix}_server")
                 database = st.text_input("Database", key=f"{prefix}_database")
-                username = st.text_input("Username", key=f"{prefix}_username")
-                password = st.text_input("Password", type="password", key=f"{prefix}_password")
+                auth_method = st.radio(
+                    "Authentication Method",
+                    ["Windows Authentication", "SQL Server Authentication"],
+                    key=f"{prefix}_auth_method",
+                    help="Choose Windows Authentication to use your Windows credentials"
+                )
+                
+                username = None
+                password = None
+                if auth_method == "SQL Server Authentication":
+                    username = st.text_input("Username", key=f"{prefix}_username")
+                    password = st.text_input("Password", type="password", key=f"{prefix}_password")
                 
                 if data_type == "Stored Procs":
                     proc_name = st.text_input("Stored Procedure Name", key=f"{prefix}_proc")
-                    if all([server, database, username, password, proc_name]):
+                    if server and database and proc_name and (auth_method == "Windows Authentication" or (username and password)):
                         return read_stored_proc(server, database, username, password, proc_name)
                 else:
                     query = st.text_area("SQL Query", key=f"{prefix}_query")
-                    if all([server, database, username, password, query]):
+                    if server and database and query and (auth_method == "Windows Authentication" or (username and password)):
                         if data_type == "SQL Server":
                             return read_sql(server, database, username, password, query)
                         else:
